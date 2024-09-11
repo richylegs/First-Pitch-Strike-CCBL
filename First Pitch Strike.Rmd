@@ -1,0 +1,128 @@
+---
+title: "First Pitch Strike"
+author: "Richard Legler"
+date: "2024-06-29"
+output: 
+  rmdformats::readthedown:
+    number_sections: true
+    highlight: tango
+    df_print: paged
+    center: true
+---
+
+```{r setup, include=FALSE}
+# Set working directory
+knitr::opts_knit$set(root.dir = 'C:/Users/richa/OneDrive/Documents/Hyannis Harbor Hawks/Cape Code Data')
+
+# Clear environment
+rm(list=ls())
+
+# Import libraries
+library(dplyr)
+library(tidyr)
+library(readr)
+library(ggplot2)
+```
+
+# Import and Clean Data
+## Import Data
+```{r}
+df_2011_2022 <- read.csv("CCBL full_pbp 2011-2022.csv")
+df_2023 <- read.csv("CCBL full_pbp 2023.csv")
+```
+
+## Clean Data
+```{r}
+df_2011_2022 <- df_2011_2022[,c("Date", "GameID","PitchResult", "PAResult", "PitchNumPA", "Inning", "Top_Btm", "InningPACount")]
+df_2023 <- df_2023[,c("Date", "GameID","PitchResult", "PAResult", "PitchNumPA", "Inning", "Top_Btm", "InningPACount")]
+```
+
+## Merge Data
+```{r}
+df <- rbind(df_2011_2022,df_2023)
+```
+
+# Transform Data
+## Relabel Data
+```{r}
+df <- df %>%
+  mutate(Year = format(as.Date(Date, format = "%m/%d/%Y"), "%Y")) %>%
+  select(-Date)
+```
+
+## Filter Data
+Only keep first and last pitch of PA
+```{r}
+df_first_last <- df %>%
+  filter(PitchNumPA == 1 | !is.na(PAResult))
+```
+
+## Add First Pitch Result
+```{r}
+df_first_last <- df_first_last %>%
+  arrange(Year, GameID, Inning, Top_Btm, InningPACount) %>%
+  group_by(GameID) %>%
+  mutate(
+    FirstPitchResult = case_when(
+      PitchNumPA == 1 & !is.na(PAResult) ~ PitchResult,
+      !is.na(PAResult) & PitchNumPA != 1 ~ lag(PitchResult, default = NA),
+      TRUE ~ NA_character_
+    )
+  ) %>%
+  ungroup()
+```
+
+## Keep Last Pitch of PA
+```{r}
+df_last <- df_first_last %>%
+  filter(!is.na(FirstPitchResult))
+```
+
+## Relabel First Pitch Result
+```{r}
+df_last <- df_last %>%
+  mutate(FirstPitchResult = case_when(
+    FirstPitchResult %in% c("Called Strike","Foul Ball","Foul Ball. Dropped fly(E2D)","Foul Ball. Dropped fly(E3D)","Foul Ball. Dropped fly(E5D)","Swinging Strike") ~ "Strike",
+    FirstPitchResult %in% c("Ball","Intentional Ball") ~ "Ball",
+    TRUE ~ FirstPitchResult
+  ))
+```
+
+## Add Reached Safely
+```{r}
+df_last <- df_last %>%
+  mutate(ReachedSafely = case_when(
+    PAResult %in% c("Double","Hit by pitch","Home run","Intentional walk","Intentional Walk","Single","Triple","Walk") ~ 1,
+    TRUE ~ 0
+  ))
+```
+
+# Year by Year Data
+```{r}
+df_summary <- df_last %>%
+  group_by(Year, FirstPitchResult, ReachedSafely) %>%
+  summarise(Count = n(), .groups = 'drop')
+```
+
+# Labels
+```{r}
+df_summary <- df_summary %>%
+  group_by(Year, FirstPitchResult) %>%
+  mutate(percentage = Count / sum(Count) * 100)
+```
+
+# Plot
+```{r}
+ggplot(df_summary, aes(x = FirstPitchResult, y = Count, fill = as.factor(ReachedSafely))) +
+  geom_bar(stat = "identity", position = "stack") +
+  facet_wrap(~ Year, scales = "free_x") +
+  geom_text(aes(label = paste0(round(percentage, 0), "%")), 
+            position = position_stack(vjust = 0.5), size = 3, color = "white") +
+  labs(title = "Count of Reached Safely by First Pitch Result for Each Year",
+       x = "First Pitch Result",
+       y = "Count",
+       fill = "Reached Safely") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
